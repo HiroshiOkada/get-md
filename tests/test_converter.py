@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from get_md.converter import _absolutize_srcset, to_markdown
+from yaml import safe_load
+
+from get_md.converter import ConversionOptions, _absolutize_srcset, extract_metadata, to_markdown
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -89,3 +92,103 @@ def test_to_markdown_drops_hidden_and_obvious_noise() -> None:
     assert "Cookie settings" not in md
     assert "Advertisement" not in md
     assert "Share this page" not in md
+
+
+def test_to_markdown_cleans_empty_elements_and_trailing_whitespace() -> None:
+    html = """
+    <main>
+      <h2>   </h2>
+      <a href="/empty"> </a>
+      <img src="decorative.png" alt="">
+      <p>Meaningful text.<br>Next line.   </p>
+    </main>
+    """
+
+    md = to_markdown(html)
+
+    assert md == "Meaningful text.\nNext line.\n"
+    assert all(line == line.rstrip() for line in md.splitlines())
+
+
+def test_to_markdown_preserves_code_language() -> None:
+    html = """
+    <main>
+      <pre><code class="highlight language-python">print("hello")</code></pre>
+      <pre data-language="typescript"><code>const ready = true;</code></pre>
+      <pre><code class="language-python;bad">unsafe()</code></pre>
+    </main>
+    """
+
+    md = to_markdown(html)
+
+    assert '```python\nprint("hello")\n```' in md
+    assert "```typescript\nconst ready = true;\n```" in md
+    assert "```\nunsafe()\n```" in md
+
+
+def test_extract_metadata_uses_document_metadata() -> None:
+    html = """
+    <html lang="ja"><head>
+      <title>Fallback title</title>
+      <meta property="og:title" content="A title: with YAML syntax">
+      <meta name="description" content="Summary #1">
+      <meta name="author" content="Example Author">
+      <meta property="article:published_time" content="2026-08-29T12:00:00Z">
+      <link rel="canonical" href="/canonical/page">
+    </head><body><h1>Heading</h1></body></html>
+    """
+    fetched_at = datetime(2026, 8, 29, 13, 0, tzinfo=UTC)
+
+    metadata = extract_metadata(html, fetched_at=fetched_at)
+
+    assert metadata.title == "A title: with YAML syntax"
+    assert metadata.description == "Summary #1"
+    assert metadata.author == "Example Author"
+    assert metadata.published_time == "2026-08-29T12:00:00Z"
+    assert metadata.canonical_url == "/canonical/page"
+    assert metadata.language == "ja"
+    assert metadata.fetched_at == "2026-08-29T13:00:00+00:00"
+
+
+def test_to_markdown_adds_safe_front_matter_only_when_requested() -> None:
+    html = """
+    <html lang="ja"><head>
+      <meta property="og:title" content="A title: with YAML syntax">
+      <link rel="canonical" href="/canonical/page">
+    </head><body><p>Content.</p></body></html>
+    """
+
+    plain = to_markdown(html, base_url="https://example.com/source")
+    with_metadata = to_markdown(
+        html,
+        base_url="https://example.com/source",
+        options=ConversionOptions(front_matter=True),
+    )
+
+    assert plain == "Content.\n"
+    _, yaml, body = with_metadata.split("---", 2)
+    assert safe_load(yaml) == {
+        "title": "A title: with YAML syntax",
+        "canonical_url": "https://example.com/canonical/page",
+        "language": "ja",
+    }
+    assert body.strip() == "Content."
+
+
+def test_to_markdown_applies_link_and_image_policies() -> None:
+    html = """
+    <p>Read <a href="/guide">the guide</a>.</p>
+    <p><img src="diagram.png" alt="System diagram"></p>
+    """
+
+    text_only = to_markdown(
+        html,
+        options=ConversionOptions(links="text", images="alt"),
+    )
+    stripped = to_markdown(
+        html,
+        options=ConversionOptions(links="strip", images="strip"),
+    )
+
+    assert text_only == "Read the guide.\n\nSystem diagram\n"
+    assert stripped == "Read .\n"

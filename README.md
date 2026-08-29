@@ -70,6 +70,9 @@ get-md <URL> [options]
 | `--wait SECONDS` | Extra seconds to wait for JavaScript rendering after the page loads. |
 | `--timeout SECONDS` | Navigation timeout in seconds (default: 30). |
 | `--screenshot` | Also save a full-page PNG screenshot next to the Markdown output. Incompatible with `-o -`. |
+| `--front-matter`, `--no-front-matter` | Include page metadata as safe YAML front matter. Disabled by default. |
+| `--links keep\|text\|strip` | Keep Markdown links, keep only their text, or remove linked content (default: `keep`). |
+| `--images keep\|alt\|strip` | Keep Markdown images, keep only alt text, or remove images (default: `keep`). |
 | `-V, --version` | Show the version and exit. |
 
 ### Examples
@@ -100,13 +103,25 @@ get-md https://example.com/page --wait 3 --screenshot
 # -> writes "page.md" and "page.png"
 ```
 
+Create an LLM-friendly document with source metadata and without link or image URLs:
+
+```sh
+get-md https://example.com/article --front-matter --links text --images alt
+```
+
+Front matter may contain the page title, description, canonical URL, author, publication
+time, language, and fetch time when those values are available. Values are YAML-encoded,
+and metadata remains opt-in so existing output is unchanged by default.
+
 ## How it works
 
 1. The page is rendered with a headless Chromium via Playwright, so JavaScript-generated content is captured.
 2. The resulting HTML is converted to Markdown with `markdownify`, stripping non-content tags (`script`, `style`, `noscript`, `template`, `svg`, `link`, `meta`).
 3. Hidden elements, ARIA-hidden content, and obvious UI noise such as cookie banners, navigation roles, dialogs, ads, and share buttons are removed conservatively before conversion.
 4. Relative link and image URLs are resolved against the requested page URL so the Markdown remains portable.
-5. The Markdown is written to the chosen file path (or stdout).
+5. Empty headings, links, and decorative images are removed; code block language declarations are preserved.
+6. Links, images, and YAML front matter are rendered according to the selected output options.
+7. The Markdown is written to the chosen file path (or stdout).
 
 ## Development
 
