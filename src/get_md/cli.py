@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
-from .converter import derive_output_path, to_markdown
+from .converter import ConversionOptions, derive_output_path, to_markdown
 from .fetcher import PlaywrightError, fetch
 
 _EPILOG = (
@@ -88,6 +89,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also save a full-page PNG screenshot next to the Markdown output.",
     )
     parser.add_argument(
+        "--front-matter",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include page metadata as YAML front matter (default: disabled).",
+    )
+    parser.add_argument(
+        "--links",
+        choices=("keep", "text", "strip"),
+        default="keep",
+        help="How to render links: keep Markdown links, keep text only, or strip them.",
+    )
+    parser.add_argument(
+        "--images",
+        choices=("keep", "alt", "strip"),
+        default="keep",
+        help="How to render images: keep Markdown images, keep alt text only, or strip them.",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -131,7 +150,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    md = to_markdown(html, base_url=args.url)
+    md = to_markdown(
+        html,
+        base_url=args.url,
+        options=ConversionOptions(
+            front_matter=args.front_matter,
+            links=args.links,
+            images=args.images,
+        ),
+        fetched_at=datetime.now(UTC),
+    )
 
     if to_stdout:
         sys.stdout.write(md)
