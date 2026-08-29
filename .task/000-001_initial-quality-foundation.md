@@ -6,7 +6,7 @@ Markdown 変換の改善を始める前に、代表 fixture と回帰テスト�
 
 ## チェックリスト
 
-- [ ] pytest を開発依存に追加し、テスト実行設定を整える。
+- [x] pytest を開発依存に追加し、テスト実行設定を整える。
 - [ ] ネットワーク不要の HTML fixture と現行変換出力の golden test を追加する。
 - [ ] `to_markdown()` に `base_url` を追加し、`href` / `src` / `srcset` を絶対化する。
 - [ ] 非表示要素と明白な UI ノイズを変換前に除去する。
