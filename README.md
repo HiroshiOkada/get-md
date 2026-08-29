@@ -106,6 +106,11 @@ get-md https://example.com/page --wait 3 --screenshot
 2. The resulting HTML is converted to Markdown with `markdownify`, stripping non-content tags (`script`, `style`, `noscript`, `template`, `svg`, `link`, `meta`).
 3. The Markdown is written to the chosen file path (or stdout).
 
+## Development
+
+Development rules are defined in [AGENTS.md](AGENTS.md). The improvement roadmap and its
+supporting research are indexed in [docs/README.md](docs/README.md).
+
 ## License
 
 MIT
