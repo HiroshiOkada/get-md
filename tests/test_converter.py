@@ -61,3 +61,33 @@ def test_absolutize_srcset_preserves_descriptors() -> None:
         "https://example.com/products/page/small.png 480w, "
         "https://example.com/assets/large.png 960w"
     )
+
+
+def test_to_markdown_drops_hidden_and_obvious_noise() -> None:
+    html = """
+    <main>
+      <p>Visible article text.</p>
+      <p hidden>Hidden text.</p>
+      <p aria-hidden="true">Aria hidden text.</p>
+      <p style="display: none">Display hidden text.</p>
+      <p style="visibility:hidden">Visibility hidden text.</p>
+      <nav role="navigation">Navigation links</nav>
+      <aside class="cookie-banner">Cookie settings</aside>
+      <div id="ad-slot">Advertisement</div>
+      <div class="share-buttons">Share this page</div>
+      <p class="shared-context">This paragraph should stay.</p>
+    </main>
+    """
+
+    md = to_markdown(html)
+
+    assert "Visible article text." in md
+    assert "This paragraph should stay." in md
+    assert "Hidden text." not in md
+    assert "Aria hidden text." not in md
+    assert "Display hidden text." not in md
+    assert "Visibility hidden text." not in md
+    assert "Navigation links" not in md
+    assert "Cookie settings" not in md
+    assert "Advertisement" not in md
+    assert "Share this page" not in md
