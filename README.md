@@ -104,12 +104,27 @@ get-md https://example.com/page --wait 3 --screenshot
 
 1. The page is rendered with a headless Chromium via Playwright, so JavaScript-generated content is captured.
 2. The resulting HTML is converted to Markdown with `markdownify`, stripping non-content tags (`script`, `style`, `noscript`, `template`, `svg`, `link`, `meta`).
-3. The Markdown is written to the chosen file path (or stdout).
+3. Hidden elements, ARIA-hidden content, and obvious UI noise such as cookie banners, navigation roles, dialogs, ads, and share buttons are removed conservatively before conversion.
+4. Relative link and image URLs are resolved against the requested page URL so the Markdown remains portable.
+5. The Markdown is written to the chosen file path (or stdout).
 
 ## Development
 
 Development rules are defined in [AGENTS.md](AGENTS.md). The improvement roadmap and its
 supporting research are indexed in [docs/README.md](docs/README.md).
+
+Standard checks:
+
+```sh
+uv run python -m pytest
+uv run ruff check .
+```
+
+Run the fixture conversion benchmark:
+
+```sh
+uv run python scripts/benchmark_converter.py tests/fixtures
+```
 
 ## License
 

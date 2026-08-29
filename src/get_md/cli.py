@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    md = to_markdown(html)
+    md = to_markdown(html, base_url=args.url)
 
     if to_stdout:
         sys.stdout.write(md)
