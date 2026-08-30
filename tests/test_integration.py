@@ -22,7 +22,10 @@ _YOUTUBE_RELATIVE_AGE = re.compile(
     r"(?:\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\s+ago|\d+\s*(?:分|時間|日|週間|か月|年)前)",
     re.I,
 )
-_YOUTUBE_VIDEO_LINK = re.compile(r"\[[^\]\n]{2,}\]\(https://www\.youtube\.com/watch\?v=")
+_YOUTUBE_VIDEO_LINK = re.compile(
+    r"\[([^\]\n]{2,})\]\(https://www\.youtube\.com/watch\?v=([A-Za-z0-9_-]{11})"
+)
+_MINIMUM_MEANINGFUL_VIDEOS = 3
 
 _PAGE = b"""<!doctype html>
 <html lang="en">
@@ -137,6 +140,16 @@ def test_youtube_openai_videos_include_meaningful_metadata(tmp_path: Path) -> No
 
     assert result.returncode == 0, result.stderr
     markdown = output.read_text(encoding="utf-8")
-    assert _YOUTUBE_VIDEO_LINK.search(markdown), "動画タイトル付きの watch リンクがない"
-    assert _YOUTUBE_VIEW_COUNT.search(markdown), "視聴回数がない"
-    assert _YOUTUBE_RELATIVE_AGE.search(markdown), "公開からの経過時間がない"
+    videos = {video_id: title.strip() for title, video_id in _YOUTUBE_VIDEO_LINK.findall(markdown)}
+    view_counts = _YOUTUBE_VIEW_COUNT.findall(markdown)
+    relative_ages = _YOUTUBE_RELATIVE_AGE.findall(markdown)
+
+    assert len(videos) >= _MINIMUM_MEANINGFUL_VIDEOS, (
+        f"タイトル付きの異なる動画が {_MINIMUM_MEANINGFUL_VIDEOS} 件未満: {videos}"
+    )
+    assert len(view_counts) >= _MINIMUM_MEANINGFUL_VIDEOS, (
+        f"視聴回数が {_MINIMUM_MEANINGFUL_VIDEOS} 件未満: {view_counts}"
+    )
+    assert len(relative_ages) >= _MINIMUM_MEANINGFUL_VIDEOS, (
+        f"公開からの経過時間が {_MINIMUM_MEANINGFUL_VIDEOS} 件未満: {relative_ages}"
+    )
