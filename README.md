@@ -1,11 +1,12 @@
 # get-md
 
-Fetch a JavaScript-rendered web page with Playwright and convert it to Markdown using [`markdownify`](https://github.com/matthewwithanm/python-markdownify).
+Fetch a web page over HTTP when possible, fall back to Playwright for JavaScript-rendered pages,
+and convert the result to Markdown using [`markdownify`](https://github.com/matthewwithanm/python-markdownify).
 
 ## Requirements
 
 - Python 3.14+
-- A Chromium browser installed for Playwright (see [First-time setup](#first-time-setup))
+- A Chromium browser installed for automatic fallback and `--fetch browser` (see [First-time setup](#first-time-setup))
 
 ## Installation
 
@@ -70,6 +71,7 @@ get-md <URL> [URL ...] [options]
 | `-o, --output PATH` | Output Markdown file path. Use `-` to print to stdout. Defaults to a name derived from the URL. |
 | `--output-dir DIR` | Save URL-derived output files in this directory. Multiple URLs require this or `-o DIR`. |
 | `--concurrency N` | Maximum pages fetched concurrently in a batch (default: `4`). |
+| `--fetch auto\|http\|browser` | Use a static HTTP request, Chromium, or HTTP with automatic browser fallback (default: `auto`). |
 | `--wait SECONDS` | Extra seconds to wait for JavaScript rendering after the page loads. |
 | `--timeout SECONDS` | Navigation timeout in seconds (default: 30). |
 | `--wait-until EVENT` | Navigation event to await: `domcontentloaded`, `load`, `networkidle`, or `commit` (default: `domcontentloaded`). |
@@ -110,6 +112,14 @@ limiting active pages with `--concurrency`. A failed URL is reported to stderr w
 the remaining URLs; the command exits nonzero after saving all successful results. Progress,
 warnings, and output paths are written to stderr.
 
+With the default `--fetch auto`, each URL is first requested over HTTP. HTML with enough visible
+text or article structure is converted immediately without starting Chromium. Short app shells,
+empty root elements, common JavaScript-required messages, HTTP failures, and non-HTML responses
+fall back to the shared browser. Use `--fetch http` for predictable browser-free operation, or
+`--fetch browser` when JavaScript enhancements must always be captured. Screenshots always use the
+browser. HTTP mode follows redirects, decodes gzip/deflate responses, honors declared character
+sets, and uses the redirect destination as the base for relative URLs.
+
 Print Markdown to stdout:
 
 ```sh
@@ -147,7 +157,7 @@ and metadata remains opt-in so existing output is unchanged by default.
 
 ## How it works
 
-1. The page is rendered with a headless Chromium via Playwright, so JavaScript-generated content is captured.
+1. The page is requested over HTTP and checked for meaningful visible content; insufficient app shells fall back to headless Chromium via Playwright.
 2. The resulting HTML is converted to Markdown with `markdownify`, stripping non-content tags (`script`, `style`, `noscript`, `template`, `svg`, `link`, `meta`).
 3. Hidden elements, ARIA-hidden content, and obvious UI noise such as cookie banners, navigation roles, dialogs, ads, and share buttons are removed conservatively before conversion.
 4. Relative link and image URLs are resolved against the requested page URL so the Markdown remains portable.
