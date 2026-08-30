@@ -1,10 +1,43 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from get_md import cli
 from get_md.fetcher import FetchResult
 from get_md.http_fetcher import HttpFetchResult
+
+
+def test_readme_documents_public_cli_options() -> None:
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    help_text = cli._build_parser().format_help()
+    public_options = (
+        "--fetch",
+        "--input",
+        "--install-browser",
+        "--output",
+        "--output-dir",
+        "--concurrency",
+        "--wait",
+        "--timeout",
+        "--wait-until",
+        "--wait-for-selector",
+        "--screenshot",
+        "--block-resources",
+        "--strict",
+        "--front-matter",
+        "--no-front-matter",
+        "--links",
+        "--images",
+        "--content",
+        "--debug-extraction",
+        "--version",
+    )
+
+    for option in public_options:
+        assert option in help_text
+        assert option in readme
 
 
 def test_cli_auto_uses_http_without_starting_browser(monkeypatch, capsys) -> None:
