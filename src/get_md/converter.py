@@ -297,18 +297,20 @@ def _format_front_matter(metadata: PageMetadata) -> str:
 
 
 def _drop_hidden_and_noise(soup: BeautifulSoup) -> None:
-    for tag in soup.find_all(attrs={"hidden": True}):
+    # Beautiful Soup clears descendants' attributes when an ancestor is decomposed.
+    # Process deepest matches first so nested matching elements remain valid objects.
+    for tag in reversed(soup.find_all(attrs={"hidden": True})):
         tag.decompose()
-    for tag in soup.find_all(attrs={"aria-hidden": True}):
+    for tag in reversed(soup.find_all(attrs={"aria-hidden": True})):
         if str(tag.get("aria-hidden", "")).lower() == "true":
             tag.decompose()
-    for tag in soup.find_all(attrs={"style": True}):
+    for tag in reversed(soup.find_all(attrs={"style": True})):
         if _HIDDEN_STYLE_RE.search(str(tag["style"])):
             tag.decompose()
-    for tag in soup.find_all(attrs={"role": True}):
+    for tag in reversed(soup.find_all(attrs={"role": True})):
         if str(tag.get("role", "")).lower() in _DROP_ROLES:
             tag.decompose()
-    for tag in soup.find_all(_is_noise_tag):
+    for tag in reversed(soup.find_all(_is_noise_tag)):
         tag.decompose()
 
 

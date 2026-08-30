@@ -94,6 +94,24 @@ def test_to_markdown_drops_hidden_and_obvious_noise() -> None:
     assert "Share this page" not in md
 
 
+def test_to_markdown_drops_nested_noise_without_invalidating_descendants() -> None:
+    html = """
+    <main>
+      <p>Visible article text.</p>
+      <nav role="navigation">
+        <div role="navigation">Nested navigation</div>
+      </nav>
+      <aside class="cookie-banner">
+        <div class="share-buttons">Nested noise</div>
+      </aside>
+    </main>
+    """
+
+    md = to_markdown(html)
+
+    assert md == "Visible article text.\n"
+
+
 def test_to_markdown_cleans_empty_elements_and_trailing_whitespace() -> None:
     html = """
     <main>
