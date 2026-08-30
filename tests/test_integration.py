@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import subprocess
@@ -14,7 +15,13 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from get_md.fetcher import FetchMetrics, NavigationTimeoutWarning, fetch
+from get_md.fetcher import (
+    FetchMetrics,
+    FetchRequest,
+    NavigationTimeoutWarning,
+    fetch,
+    fetch_many,
+)
 
 _YOUTUBE_LIVE_URL = "https://www.youtube.com/@OpenAI/videos"
 _YOUTUBE_VIEW_COUNT = re.compile(
@@ -55,10 +62,24 @@ _PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000
 
 class _Handler(BaseHTTPRequestHandler):
     requested_paths: list[str] = []
+    active_requests = 0
+    max_active_requests = 0
+    activity_lock = threading.Lock()
 
     def do_GET(self) -> None:  # noqa: N802
         self.requested_paths.append(self.path)
-        if self.path == "/slow":
+        if self.path.startswith("/batch/"):
+            with self.activity_lock:
+                type(self).active_requests += 1
+                type(self).max_active_requests = max(
+                    type(self).max_active_requests, type(self).active_requests
+                )
+            time.sleep(0.3)
+            body = f"<html><body><h1>{self.path}</h1></body></html>".encode()
+            content_type = "text/html; charset=utf-8"
+            with self.activity_lock:
+                type(self).active_requests -= 1
+        elif self.path == "/slow":
             time.sleep(2)
             body = b"done"
             content_type = "text/plain"
@@ -87,6 +108,8 @@ class _Handler(BaseHTTPRequestHandler):
 @contextmanager
 def local_page() -> Iterator[str]:
     _Handler.requested_paths = []
+    _Handler.active_requests = 0
+    _Handler.max_active_requests = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -114,6 +137,31 @@ def test_fetch_reports_separate_launch_and_navigation_metrics() -> None:
     assert len(metrics) == 1
     assert metrics[0].browser_launch_seconds > 0
     assert metrics[0].navigation_seconds > 0
+
+
+def test_fetch_many_reuses_browser_limits_concurrency_and_preserves_order() -> None:
+    metrics: list[FetchMetrics] = []
+    with local_page() as url:
+        base_url = url.rsplit("/", 1)[0]
+        expected_urls = [f"{base_url}/batch/{index}" for index in range(3)]
+        results = asyncio.run(
+            fetch_many(
+                [FetchRequest(target) for target in expected_urls],
+                concurrency=2,
+                metrics_callback=metrics.append,
+            )
+        )
+
+    assert [result.url for result in results] == expected_urls
+    assert all(result.error is None for result in results)
+    assert [f"/batch/{index}" in (result.html or "") for index, result in enumerate(results)] == [
+        True,
+        True,
+        True,
+    ]
+    assert _Handler.max_active_requests == 2
+    assert len(metrics) == 3
+    assert len({metric.browser_launch_seconds for metric in metrics}) == 1
 
 
 def test_fetch_uses_partial_dom_after_navigation_timeout() -> None:

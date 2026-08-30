@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -10,7 +11,14 @@ from pathlib import Path
 
 from . import __version__
 from .converter import ConversionOptions, ExtractionDecision, derive_output_path, to_markdown
-from .fetcher import _RESOURCE_TYPES, _WAIT_UNTIL_VALUES, PlaywrightError, fetch
+from .fetcher import (
+    _RESOURCE_TYPES,
+    _WAIT_UNTIL_VALUES,
+    FetchRequest,
+    PlaywrightError,
+    fetch,
+    fetch_many,
+)
 
 _EPILOG = (
     "First-time setup (installs the Chromium binary, needed once):\n"
@@ -82,6 +90,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "Directory in which to save output files "
             "(required for multiple URLs unless -o is used)."
         ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=_positive_int,
+        default=4,
+        help="Maximum number of pages fetched concurrently in a batch (default: 4).",
     )
     parser.add_argument(
         "--wait",
@@ -178,54 +192,105 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("at least one URL or --input is required")
 
     outputs = _resolve_outputs(parser, urls, args.output, args.output_dir)
-    for url, output in zip(urls, outputs, strict=True):
-        to_stdout = output == "-"
-        screenshot_path: Path | None = None
-        if args.screenshot:
-            if to_stdout:
-                parser.error("--screenshot is incompatible with -o -")
-            screenshot_path = Path(output).with_suffix(".png")
-
+    screenshots = [_screenshot_path(parser, output, args.screenshot) for output in outputs]
+    if len(urls) > 1:
         try:
-            html = fetch(
-                url,
-                wait=args.wait,
-                timeout=args.timeout,
-                screenshot_path=screenshot_path,
-                wait_until=args.wait_until,
-                wait_for_selector=args.wait_for_selector,
-                block_resources=args.block_resources,
-                strict=args.strict,
+            results = asyncio.run(
+                fetch_many(
+                    [
+                        FetchRequest(url, screenshot)
+                        for url, screenshot in zip(urls, screenshots, strict=True)
+                    ],
+                    concurrency=args.concurrency,
+                    wait=args.wait,
+                    timeout=args.timeout,
+                    wait_until=args.wait_until,
+                    wait_for_selector=args.wait_for_selector,
+                    block_resources=args.block_resources,
+                    strict=args.strict,
+                )
             )
-        except PlaywrightError as exc:
-            print(f"error: failed to render page: {exc}", file=sys.stderr)
+        except (PlaywrightError, OSError) as exc:
+            print(f"error: failed to start batch: {exc}", file=sys.stderr)
             return 1
-        except OSError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+        failed = False
+        for result, output, screenshot_path in zip(results, outputs, screenshots, strict=True):
+            if result.error is not None:
+                print(f"error: failed to render {result.url}: {result.error}", file=sys.stderr)
+                failed = True
+                continue
+            assert result.html is not None
+            try:
+                _write_markdown(result.html, result.url, output, screenshot_path, args)
+            except OSError as exc:
+                print(f"error: failed to save {result.url}: {exc}", file=sys.stderr)
+                failed = True
+        return 1 if failed else 0
 
-        md = to_markdown(
-            html,
-            base_url=url,
-            options=ConversionOptions(
-                front_matter=args.front_matter,
-                links=args.links,
-                images=args.images,
-                content=args.content,
-            ),
-            fetched_at=datetime.now(UTC),
-            extraction_callback=_print_extraction_debug if args.debug_extraction else None,
+    url = urls[0]
+    output = outputs[0]
+    screenshot_path = screenshots[0]
+    try:
+        html = fetch(
+            url,
+            wait=args.wait,
+            timeout=args.timeout,
+            screenshot_path=screenshot_path,
+            wait_until=args.wait_until,
+            wait_for_selector=args.wait_for_selector,
+            block_resources=args.block_resources,
+            strict=args.strict,
         )
+    except PlaywrightError as exc:
+        print(f"error: failed to render page: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
-        if to_stdout:
-            sys.stdout.write(md)
-        else:
-            Path(output).parent.mkdir(parents=True, exist_ok=True)
-            Path(output).write_text(md, encoding="utf-8")
-            print(f"saved: {output}")
-            if screenshot_path is not None:
-                print(f"saved: {screenshot_path}")
+    _write_markdown(html, url, output, screenshot_path, args)
     return 0
+
+
+def _screenshot_path(
+    parser: argparse.ArgumentParser, output: str, screenshot: bool
+) -> Path | None:
+    if not screenshot:
+        return None
+    if output == "-":
+        parser.error("--screenshot is incompatible with -o -")
+    return Path(output).with_suffix(".png")
+
+
+def _write_markdown(
+    html: str,
+    url: str,
+    output: str,
+    screenshot_path: Path | None,
+    args: argparse.Namespace,
+) -> None:
+    """取得済みHTMLを変換し、URL単位の出力先へ保存する。"""
+    md = to_markdown(
+        html,
+        base_url=url,
+        options=ConversionOptions(
+            front_matter=args.front_matter,
+            links=args.links,
+            images=args.images,
+            content=args.content,
+        ),
+        fetched_at=datetime.now(UTC),
+        extraction_callback=_print_extraction_debug if args.debug_extraction else None,
+    )
+
+    if output == "-":
+        sys.stdout.write(md)
+    else:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_text(md, encoding="utf-8")
+        print(f"saved: {output}", file=sys.stderr)
+        if screenshot_path is not None:
+            print(f"saved: {screenshot_path}", file=sys.stderr)
 
 
 def _read_urls(path: Path) -> list[str]:
@@ -255,7 +320,11 @@ def _resolve_outputs(
     directory = output_dir or (Path(output) if output is not None else None)
     if directory is None:
         parser.error("multiple URLs require --output-dir or -o DIR")
-    return [str(directory / derive_output_path(url)) for url in urls]
+    outputs = [str(directory / derive_output_path(url)) for url in urls]
+    duplicates = sorted({path for path in outputs if outputs.count(path) > 1})
+    if duplicates:
+        parser.error(f"output filename collision: {', '.join(duplicates)}")
+    return outputs
 
 
 def _print_extraction_debug(decision: ExtractionDecision) -> None:
@@ -284,6 +353,13 @@ def _parse_resource_types(value: str) -> frozenset[str]:
     if not resource_types:
         raise argparse.ArgumentTypeError("specify resource types or 'none'")
     return resource_types
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 if __name__ == "__main__":
