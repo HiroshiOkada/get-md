@@ -192,3 +192,73 @@ def test_to_markdown_applies_link_and_image_policies() -> None:
 
     assert text_only == "Read the guide.\n\nSystem diagram\n"
     assert stripped == "Read .\n"
+
+
+def test_dom_content_selects_the_highest_quality_candidate() -> None:
+    html = """
+    <body>
+      <main><p>Short introduction that should not win this candidate comparison.</p></main>
+      <article id="story">
+        <h1>Primary story</h1>
+        <p>This is the first substantial paragraph. It contains useful article details.</p>
+        <p>This is another substantial paragraph, with enough text to identify the body.</p>
+      </article>
+      <footer>Unrelated footer text.</footer>
+    </body>
+    """
+    decisions = []
+
+    md = to_markdown(
+        html,
+        options=ConversionOptions(content="dom"),
+        extraction_callback=decisions.append,
+    )
+
+    assert "Primary story" in md
+    assert "Short introduction" not in md
+    assert "Unrelated footer" not in md
+    assert decisions[0].selected == "article#story"
+    assert decisions[0].candidates[0].paragraphs == 2
+
+
+def test_dom_content_falls_back_for_short_or_link_heavy_candidates() -> None:
+    short_html = "<body><header>Site name</header><main><p>Brief.</p></main></body>"
+    link_html = """
+    <body><p>Page context outside candidate.</p><main>
+      <a href="/1">A long navigation destination one</a>
+      <a href="/2">A long navigation destination two</a>
+      <a href="/3">A long navigation destination three</a>
+    </main></body>
+    """
+    decisions = []
+
+    short_md = to_markdown(
+        short_html,
+        options=ConversionOptions(content="auto"),
+        extraction_callback=decisions.append,
+    )
+    link_md = to_markdown(
+        link_html,
+        options=ConversionOptions(content="dom"),
+        extraction_callback=decisions.append,
+    )
+
+    assert "Site name" in short_md
+    assert "Page context outside candidate" in link_md
+    assert decisions[0].selected == "full"
+    assert "too short" in decisions[0].reason
+    assert decisions[1].selected == "full"
+    assert "link density" in decisions[1].reason
+
+
+def test_dom_content_fixture_preserves_article_structure_and_removes_chrome() -> None:
+    md = to_markdown(
+        read_fixture("content_extraction.html"),
+        options=ConversionOptions(content="auto"),
+    )
+
+    assert "# Reliable content extraction" in md
+    assert '```python\nprint("content remains")\n```' in md
+    assert "Global product navigation" not in md
+    assert "Recommended products" not in md
+    assert "Company links" not in md

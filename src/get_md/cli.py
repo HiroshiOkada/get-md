@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
-from .converter import ConversionOptions, derive_output_path, to_markdown
+from .converter import ConversionOptions, ExtractionDecision, derive_output_path, to_markdown
 from .fetcher import PlaywrightError, fetch
 
 _EPILOG = (
@@ -107,6 +107,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="How to render images: keep Markdown images, keep alt text only, or strip them.",
     )
     parser.add_argument(
+        "--content",
+        choices=("full", "dom", "auto"),
+        default="full",
+        help="Content extraction mode: full document or scored DOM candidate (default: full).",
+    )
+    parser.add_argument(
+        "--debug-extraction",
+        action="store_true",
+        help="Print content candidate scores and the extraction decision to stderr.",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -157,8 +168,10 @@ def main(argv: list[str] | None = None) -> int:
             front_matter=args.front_matter,
             links=args.links,
             images=args.images,
+            content=args.content,
         ),
         fetched_at=datetime.now(UTC),
+        extraction_callback=_print_extraction_debug if args.debug_extraction else None,
     )
 
     if to_stdout:
@@ -169,6 +182,22 @@ def main(argv: list[str] | None = None) -> int:
         if screenshot_path is not None:
             print(f"saved: {screenshot_path}")
     return 0
+
+
+def _print_extraction_debug(decision: ExtractionDecision) -> None:
+    print(
+        f"extraction: mode={decision.requested_mode} selected={decision.selected} "
+        f"reason={decision.reason}",
+        file=sys.stderr,
+    )
+    for candidate in decision.candidates:
+        print(
+            f"candidate: selector={candidate.selector} score={candidate.score:.2f} "
+            f"text={candidate.text_length} paragraphs={candidate.paragraphs} "
+            f"links={candidate.link_density:.3f} punctuation={candidate.punctuation} "
+            f"structure={candidate.structural_elements}",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

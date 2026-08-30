@@ -73,6 +73,8 @@ get-md <URL> [options]
 | `--front-matter`, `--no-front-matter` | Include page metadata as safe YAML front matter. Disabled by default. |
 | `--links keep\|text\|strip` | Keep Markdown links, keep only their text, or remove linked content (default: `keep`). |
 | `--images keep\|alt\|strip` | Keep Markdown images, keep only alt text, or remove images (default: `keep`). |
+| `--content full\|dom\|auto` | Convert the full document or select a scored DOM content candidate (`full` by default). |
+| `--debug-extraction` | Print candidate scores, the selected root, and fallback reasons to stderr. |
 | `-V, --version` | Show the version and exit. |
 
 ### Examples
@@ -109,6 +111,18 @@ Create an LLM-friendly document with source metadata and without link or image U
 get-md https://example.com/article --front-matter --links text --images alt
 ```
 
+Extract the primary article or main element while inspecting the selection decision:
+
+```sh
+get-md https://example.com/article --content auto --debug-extraction
+```
+
+`dom` and `auto` score semantic DOM candidates using text length, paragraphs, link density,
+punctuation, headings, code blocks, and tables. If the best candidate is too short, dominated
+by links, or lacks document structure, conversion safely falls back to the full document.
+The two modes currently share this conservative DOM strategy; `auto` is reserved for adding
+an evaluated extraction library in a later phase. The default remains `full` for compatibility.
+
 Front matter may contain the page title, description, canonical URL, author, publication
 time, language, and fetch time when those values are available. Values are YAML-encoded,
 and metadata remains opt-in so existing output is unchanged by default.
@@ -120,8 +134,9 @@ and metadata remains opt-in so existing output is unchanged by default.
 3. Hidden elements, ARIA-hidden content, and obvious UI noise such as cookie banners, navigation roles, dialogs, ads, and share buttons are removed conservatively before conversion.
 4. Relative link and image URLs are resolved against the requested page URL so the Markdown remains portable.
 5. Empty headings, links, and decorative images are removed; code block language declarations are preserved.
-6. Links, images, and YAML front matter are rendered according to the selected output options.
-7. The Markdown is written to the chosen file path (or stdout).
+6. When requested, semantic content candidates are scored and the best suitable root is selected.
+7. Links, images, and YAML front matter are rendered according to the selected output options.
+8. The Markdown is written to the chosen file path (or stdout).
 
 ## Development
 
