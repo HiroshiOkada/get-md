@@ -49,6 +49,8 @@ class FetchResult:
     url: str
     html: str | None = None
     error: Exception | None = None
+    final_url: str | None = None
+    fetch_method: str = "browser"
 
 
 def fetch(
@@ -127,7 +129,7 @@ async def fetch_many(
                         browser_launch_seconds=launch_seconds,
                         metrics_callback=metrics_callback,
                     )
-                    return FetchResult(request.url, html=html)
+                    return FetchResult(request.url, html=html, final_url=request.url)
                 except (PlaywrightError, OSError) as exc:
                     return FetchResult(request.url, error=exc)
 

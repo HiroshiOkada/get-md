@@ -4,6 +4,37 @@ import pytest
 
 from get_md import cli
 from get_md.fetcher import FetchResult
+from get_md.http_fetcher import HttpFetchResult
+
+
+def test_cli_auto_uses_http_without_starting_browser(monkeypatch, capsys) -> None:
+    html = "<main>" + "A complete static article sentence. " * 12 + "</main>"
+    monkeypatch.setattr(
+        cli, "fetch_http", lambda *args, **kwargs: HttpFetchResult(html, "https://example.com/final")
+    )
+    monkeypatch.setattr(cli, "fetch", lambda *args, **kwargs: pytest.fail("browser started"))
+
+    result = cli.main(["https://example.com/start", "-o", "-"])
+
+    assert result == 0
+    assert "complete static article" in capsys.readouterr().out
+
+
+def test_cli_auto_falls_back_to_browser_for_spa_shell(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "fetch_http",
+        lambda *args, **kwargs: HttpFetchResult(
+            "<div id=root></div><noscript>You need to enable JavaScript</noscript>",
+            "https://example.com/app",
+        ),
+    )
+    monkeypatch.setattr(cli, "fetch", lambda *args, **kwargs: "<main>Rendered application</main>")
+
+    result = cli.main(["https://example.com/app", "-o", "-"])
+
+    assert result == 0
+    assert "Rendered application" in capsys.readouterr().out
 
 
 def test_cli_passes_markdown_options(monkeypatch, capsys) -> None:
@@ -19,6 +50,8 @@ def test_cli_passes_markdown_options(monkeypatch, capsys) -> None:
     result = cli.main(
         [
             "https://example.com/page",
+            "--fetch",
+            "browser",
             "-o",
             "-",
             "--front-matter",
@@ -50,7 +83,16 @@ def test_cli_selects_dom_content_and_prints_extraction_debug(monkeypatch, capsys
     )
 
     result = cli.main(
-        ["https://example.com/guide", "-o", "-", "--content", "dom", "--debug-extraction"]
+        [
+            "https://example.com/guide",
+            "-o",
+            "-",
+            "--fetch",
+            "browser",
+            "--content",
+            "dom",
+            "--debug-extraction",
+        ]
     )
 
     captured = capsys.readouterr()
@@ -89,6 +131,8 @@ def test_cli_reads_multiple_urls_and_writes_to_output_directory(
             str(output_dir),
             "--concurrency",
             "2",
+            "--fetch",
+            "browser",
         ]
     )
 
@@ -110,7 +154,14 @@ def test_cli_accepts_output_as_directory_for_multiple_urls(monkeypatch, tmp_path
     output_dir = tmp_path / "results"
 
     result = cli.main(
-        ["https://example.com/one", "https://example.com/two", "-o", str(output_dir)]
+        [
+            "https://example.com/one",
+            "https://example.com/two",
+            "-o",
+            str(output_dir),
+            "--fetch",
+            "browser",
+        ]
     )
 
     assert result == 0
@@ -138,6 +189,8 @@ def test_cli_batch_continues_after_error_and_preserves_result_order(
             "https://example.com/third",
             "--output-dir",
             str(output_dir),
+            "--fetch",
+            "browser",
         ]
     )
 
@@ -160,7 +213,9 @@ def test_cli_single_url_keeps_fetch_and_output_compatibility(monkeypatch, tmp_pa
     monkeypatch.setattr(cli, "fetch", fake_fetch)
     output = tmp_path / "custom.md"
 
-    result = cli.main(["https://example.com/single", "-o", str(output)])
+    result = cli.main(
+        ["https://example.com/single", "-o", str(output), "--fetch", "browser"]
+    )
 
     assert result == 0
     assert called == ["https://example.com/single"]

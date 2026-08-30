@@ -5,6 +5,7 @@ description = "Fetch a JavaScript-rendered web page and convert it to Markdown."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "beautifulsoup4>=4.12",
     "markdownify>=1.1",
     "playwright>=1.40",
     "pyyaml>=6.0",

@@ -15,10 +15,12 @@ from .fetcher import (
     _RESOURCE_TYPES,
     _WAIT_UNTIL_VALUES,
     FetchRequest,
+    FetchResult,
     PlaywrightError,
     fetch,
     fetch_many,
 )
+from .http_fetcher import fetch_http, is_meaningful_html
 
 _EPILOG = (
     "First-time setup (installs the Chromium binary, needed once):\n"
@@ -61,6 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Fetch a JavaScript-rendered web page and convert it to Markdown.",
         epilog=_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--fetch",
+        choices=("auto", "http", "browser"),
+        default="auto",
+        help="Fetch with HTTP, a browser, or automatic fallback (default: auto).",
     )
     parser.add_argument(
         "urls",
@@ -195,21 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     screenshots = [_screenshot_path(parser, output, args.screenshot) for output in outputs]
     if len(urls) > 1:
         try:
-            results = asyncio.run(
-                fetch_many(
-                    [
-                        FetchRequest(url, screenshot)
-                        for url, screenshot in zip(urls, screenshots, strict=True)
-                    ],
-                    concurrency=args.concurrency,
-                    wait=args.wait,
-                    timeout=args.timeout,
-                    wait_until=args.wait_until,
-                    wait_for_selector=args.wait_for_selector,
-                    block_resources=args.block_resources,
-                    strict=args.strict,
-                )
-            )
+            results = asyncio.run(_fetch_many_selected(urls, screenshots, args))
         except (PlaywrightError, OSError) as exc:
             print(f"error: failed to start batch: {exc}", file=sys.stderr)
             return 1
@@ -221,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             assert result.html is not None
             try:
-                _write_markdown(result.html, result.url, output, screenshot_path, args)
+                _write_markdown(
+                    result.html, result.final_url or result.url, output, screenshot_path, args
+                )
             except OSError as exc:
                 print(f"error: failed to save {result.url}: {exc}", file=sys.stderr)
                 failed = True
@@ -231,25 +227,90 @@ def main(argv: list[str] | None = None) -> int:
     output = outputs[0]
     screenshot_path = screenshots[0]
     try:
-        html = fetch(
-            url,
-            wait=args.wait,
-            timeout=args.timeout,
-            screenshot_path=screenshot_path,
-            wait_until=args.wait_until,
-            wait_for_selector=args.wait_for_selector,
-            block_resources=args.block_resources,
-            strict=args.strict,
-        )
-    except PlaywrightError as exc:
+        html, final_url = _fetch_one_selected(url, screenshot_path, args)
+    except (PlaywrightError, ValueError) as exc:
         print(f"error: failed to render page: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    _write_markdown(html, url, output, screenshot_path, args)
+    _write_markdown(html, final_url, output, screenshot_path, args)
     return 0
+
+
+def _fetch_one_selected(
+    url: str, screenshot_path: Path | None, args: argparse.Namespace
+) -> tuple[str, str]:
+    """選択した取得方式で単一 URL を取得する。"""
+    if args.fetch != "browser" and screenshot_path is None:
+        try:
+            result = fetch_http(url, timeout=args.timeout)
+            if args.fetch == "http" or is_meaningful_html(result.html):
+                return result.html, result.final_url
+        except (OSError, ValueError):
+            if args.fetch == "http":
+                raise
+    html = fetch(
+        url,
+        wait=args.wait,
+        timeout=args.timeout,
+        screenshot_path=screenshot_path,
+        wait_until=args.wait_until,
+        wait_for_selector=args.wait_for_selector,
+        block_resources=args.block_resources,
+        strict=args.strict,
+    )
+    return html, url
+
+
+async def _fetch_many_selected(
+    urls: list[str], screenshots: list[Path | None], args: argparse.Namespace
+) -> list[FetchResult]:
+    """HTTP 候補を並行取得し、必要な URL だけ Chromium へ渡す。"""
+    results: list[FetchResult | None] = [None] * len(urls)
+    browser_indexes: list[int] = []
+
+    async def try_http(index: int) -> None:
+        if args.fetch == "browser" or screenshots[index] is not None:
+            browser_indexes.append(index)
+            return
+        try:
+            result = await asyncio.to_thread(fetch_http, urls[index], timeout=args.timeout)
+            if args.fetch == "http" or is_meaningful_html(result.html):
+                results[index] = FetchResult(
+                    urls[index], html=result.html, final_url=result.final_url, fetch_method="http"
+                )
+            else:
+                browser_indexes.append(index)
+        except (OSError, ValueError) as exc:
+            if args.fetch == "http":
+                results[index] = FetchResult(urls[index], error=exc, fetch_method="http")
+            else:
+                browser_indexes.append(index)
+
+    semaphore = asyncio.Semaphore(args.concurrency)
+
+    async def limited(index: int) -> None:
+        async with semaphore:
+            await try_http(index)
+
+    await asyncio.gather(*(limited(index) for index in range(len(urls))))
+    if browser_indexes:
+        browser_results = await fetch_many(
+            [FetchRequest(urls[index], screenshots[index]) for index in browser_indexes],
+            concurrency=args.concurrency,
+            wait=args.wait,
+            timeout=args.timeout,
+            wait_until=args.wait_until,
+            wait_for_selector=args.wait_for_selector,
+            block_resources=args.block_resources,
+            strict=args.strict,
+        )
+        for index, result in zip(browser_indexes, browser_results, strict=True):
+            results[index] = result
+    assert all(result is not None for result in results)
+    return [result for result in results if result is not None]
 
 
 def _screenshot_path(
