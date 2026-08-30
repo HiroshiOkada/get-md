@@ -57,16 +57,18 @@ This works regardless of how `get-md` was installed (`uv tool install`, `uvx`, `
 ## Usage
 
 ```sh
-get-md <URL> [options]
+get-md <URL> [URL ...] [options]
 ```
 
 ### Options
 
 | Option | Description |
 | --- | --- |
-| `<URL>` | URL of the page to fetch (required, unless `--install-browser` is given). |
+| `<URL>` | One or more URLs to fetch (unless `--input` or `--install-browser` is given). |
+| `--input PATH` | Read additional URLs from a UTF-8 file, one URL per line. Empty lines and `#` comments are ignored. |
 | `--install-browser` | Install the Chromium binary required by Playwright, then exit. |
 | `-o, --output PATH` | Output Markdown file path. Use `-` to print to stdout. Defaults to a name derived from the URL. |
+| `--output-dir DIR` | Save URL-derived output files in this directory. Multiple URLs require this or `-o DIR`. |
 | `--wait SECONDS` | Extra seconds to wait for JavaScript rendering after the page loads. |
 | `--timeout SECONDS` | Navigation timeout in seconds (default: 30). |
 | `--wait-until EVENT` | Navigation event to await: `domcontentloaded`, `load`, `networkidle`, or `commit` (default: `domcontentloaded`). |
@@ -94,6 +96,12 @@ Specify an output path:
 
 ```sh
 get-md https://example.com/page -o page.md
+```
+
+Fetch multiple pages from arguments and a file:
+
+```sh
+get-md https://example.com/one --input urls.txt --output-dir exported
 ```
 
 Print Markdown to stdout:

@@ -55,10 +55,14 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "url",
-        nargs="?",
-        default=None,
-        help="URL of the page to fetch. Required unless --install-browser is given.",
+        "urls",
+        nargs="*",
+        help="URLs of pages to fetch. At least one URL or --input is required.",
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        help="Read additional URLs from a UTF-8 file, one URL per line.",
     )
     parser.add_argument(
         "--install-browser",
@@ -70,6 +74,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         default=None,
         help="Output Markdown path. Use '-' for stdout. Defaults to a name derived from the URL.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "Directory in which to save output files "
+            "(required for multiple URLs unless -o is used)."
+        ),
     )
     parser.add_argument(
         "--wait",
@@ -156,59 +168,94 @@ def main(argv: list[str] | None = None) -> int:
     if args.install_browser:
         return install_browser()
 
-    if args.url is None:
-        parser.error("the following arguments are required: url")
+    urls = list(args.urls)
+    if args.input is not None:
+        try:
+            urls.extend(_read_urls(args.input))
+        except OSError as exc:
+            parser.error(str(exc))
+    if not urls:
+        parser.error("at least one URL or --input is required")
 
-    output = args.output
-    to_stdout = output == "-"
-    if output is None:
-        output = derive_output_path(args.url)
+    outputs = _resolve_outputs(parser, urls, args.output, args.output_dir)
+    for url, output in zip(urls, outputs, strict=True):
+        to_stdout = output == "-"
+        screenshot_path: Path | None = None
+        if args.screenshot:
+            if to_stdout:
+                parser.error("--screenshot is incompatible with -o -")
+            screenshot_path = Path(output).with_suffix(".png")
 
-    screenshot_path: Path | None = None
-    if args.screenshot:
-        if to_stdout:
-            parser.error("--screenshot is incompatible with -o -")
-        screenshot_path = Path(output).with_suffix(".png")
+        try:
+            html = fetch(
+                url,
+                wait=args.wait,
+                timeout=args.timeout,
+                screenshot_path=screenshot_path,
+                wait_until=args.wait_until,
+                wait_for_selector=args.wait_for_selector,
+                block_resources=args.block_resources,
+                strict=args.strict,
+            )
+        except PlaywrightError as exc:
+            print(f"error: failed to render page: {exc}", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
-    try:
-        html = fetch(
-            args.url,
-            wait=args.wait,
-            timeout=args.timeout,
-            screenshot_path=screenshot_path,
-            wait_until=args.wait_until,
-            wait_for_selector=args.wait_for_selector,
-            block_resources=args.block_resources,
-            strict=args.strict,
+        md = to_markdown(
+            html,
+            base_url=url,
+            options=ConversionOptions(
+                front_matter=args.front_matter,
+                links=args.links,
+                images=args.images,
+                content=args.content,
+            ),
+            fetched_at=datetime.now(UTC),
+            extraction_callback=_print_extraction_debug if args.debug_extraction else None,
         )
-    except PlaywrightError as exc:
-        print(f"error: failed to render page: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
 
-    md = to_markdown(
-        html,
-        base_url=args.url,
-        options=ConversionOptions(
-            front_matter=args.front_matter,
-            links=args.links,
-            images=args.images,
-            content=args.content,
-        ),
-        fetched_at=datetime.now(UTC),
-        extraction_callback=_print_extraction_debug if args.debug_extraction else None,
-    )
-
-    if to_stdout:
-        sys.stdout.write(md)
-    else:
-        Path(output).write_text(md, encoding="utf-8")
-        print(f"saved: {output}")
-        if screenshot_path is not None:
-            print(f"saved: {screenshot_path}")
+        if to_stdout:
+            sys.stdout.write(md)
+        else:
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            Path(output).write_text(md, encoding="utf-8")
+            print(f"saved: {output}")
+            if screenshot_path is not None:
+                print(f"saved: {screenshot_path}")
     return 0
+
+
+def _read_urls(path: Path) -> list[str]:
+    """入力ファイルから空行とコメント行を除いて URL を読み込む。"""
+    return [
+        line
+        for raw_line in path.read_text(encoding="utf-8").splitlines()
+        if (line := raw_line.strip()) and not line.startswith("#")
+    ]
+
+
+def _resolve_outputs(
+    parser: argparse.ArgumentParser,
+    urls: list[str],
+    output: str | None,
+    output_dir: Path | None,
+) -> list[str]:
+    """単一・複数 URL の互換性を保ちながら出力先を決める。"""
+    if output is not None and output_dir is not None:
+        parser.error("--output and --output-dir cannot be used together")
+    if len(urls) == 1:
+        if output_dir is not None:
+            return [str(output_dir / derive_output_path(urls[0]))]
+        return [output or derive_output_path(urls[0])]
+    if output == "-":
+        parser.error("-o - can only be used with a single URL")
+    directory = output_dir or (Path(output) if output is not None else None)
+    if directory is None:
+        parser.error("multiple URLs require --output-dir or -o DIR")
+    return [str(directory / derive_output_path(url)) for url in urls]
 
 
 def _print_extraction_debug(decision: ExtractionDecision) -> None:

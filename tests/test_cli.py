@@ -56,3 +56,47 @@ def test_cli_selects_dom_content_and_prints_extraction_debug(monkeypatch, capsys
     assert "Site chrome" not in captured.out
     assert "extraction: mode=dom selected=article#guide" in captured.err
     assert "candidate: selector=article#guide" in captured.err
+
+
+def test_cli_reads_multiple_urls_and_writes_to_output_directory(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    input_path = tmp_path / "urls.txt"
+    input_path.write_text("# targets\nhttps://example.com/second\n\n", encoding="utf-8")
+    fetched: list[str] = []
+
+    def fake_fetch(url: str, **kwargs: object) -> str:
+        fetched.append(url)
+        return f"<html><body><h1>{url}</h1></body></html>"
+
+    monkeypatch.setattr(cli, "fetch", fake_fetch)
+    output_dir = tmp_path / "results"
+
+    result = cli.main(
+        [
+            "https://example.com/first",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert result == 0
+    assert fetched == ["https://example.com/first", "https://example.com/second"]
+    assert "https://example.com/first" in (output_dir / "first.md").read_text()
+    assert "https://example.com/second" in (output_dir / "second.md").read_text()
+    assert capsys.readouterr().out.count("saved:") == 2
+
+
+def test_cli_accepts_output_as_directory_for_multiple_urls(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(cli, "fetch", lambda *args, **kwargs: "<p>content</p>")
+    output_dir = tmp_path / "results"
+
+    result = cli.main(
+        ["https://example.com/one", "https://example.com/two", "-o", str(output_dir)]
+    )
+
+    assert result == 0
+    assert (output_dir / "one.md").is_file()
+    assert (output_dir / "two.md").is_file()
