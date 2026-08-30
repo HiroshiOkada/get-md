@@ -29,6 +29,9 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "live: 外部の実サイトとネットワークへ接続する opt-in 統合テスト",
+]
 
 [tool.ruff]
 line-length = 100
