@@ -12,6 +12,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from markdownify import markdownify
+from readability import Document
 from yaml import safe_dump
 
 # Tags whose entire subtree (content included) is dropped before conversion.
@@ -43,7 +44,7 @@ class ConversionOptions:
     front_matter: bool = False
     links: Literal["keep", "text", "strip"] = "keep"
     images: Literal["keep", "alt", "strip"] = "keep"
-    content: Literal["full", "dom", "auto"] = "full"
+    content: Literal["full", "dom", "readability", "auto"] = "full"
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +130,25 @@ def to_markdown(
 
 
 def _select_content_root(
-    soup: BeautifulSoup, mode: Literal["full", "dom", "auto"]
+    soup: BeautifulSoup, mode: Literal["full", "dom", "readability", "auto"]
 ) -> tuple[Tag | BeautifulSoup, ExtractionDecision]:
     full_root = soup.body or soup
     if mode == "full":
         return full_root, ExtractionDecision(mode, "full", "full mode requested")
+
+    if mode in {"readability", "auto"}:
+        extracted = BeautifulSoup(
+            Document(str(full_root)).summary(html_partial=True), "html.parser"
+        )
+        readability_root = extracted.body or extracted
+        readability_score = _score_candidate(readability_root, "readability")
+        if _candidate_is_acceptable(readability_score):
+            return readability_root, ExtractionDecision(
+                mode,
+                "readability",
+                "readability candidate passed quality checks",
+                (readability_score,),
+            )
 
     scored = sorted(
         (_score_candidate(tag, selector) for tag, selector in _content_candidates(soup)),
@@ -158,7 +173,22 @@ def _select_content_root(
         tag for tag, selector in _content_candidates(soup) if selector == best.selector
     )
     return selected_tag, ExtractionDecision(
-        mode, best.selector, "highest-quality DOM candidate", tuple(scored)
+        mode,
+        best.selector,
+        (
+            "readability candidate failed quality checks; selected DOM candidate"
+            if mode in {"readability", "auto"}
+            else "highest-quality DOM candidate"
+        ),
+        tuple(scored),
+    )
+
+
+def _candidate_is_acceptable(candidate: ContentCandidate) -> bool:
+    return (
+        candidate.text_length >= 80
+        and candidate.link_density <= 0.65
+        and (candidate.paragraphs > 0 or candidate.structural_elements >= 2)
     )
 
 

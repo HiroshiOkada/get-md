@@ -73,7 +73,7 @@ get-md <URL> [options]
 | `--front-matter`, `--no-front-matter` | Include page metadata as safe YAML front matter. Disabled by default. |
 | `--links keep\|text\|strip` | Keep Markdown links, keep only their text, or remove linked content (default: `keep`). |
 | `--images keep\|alt\|strip` | Keep Markdown images, keep only alt text, or remove images (default: `keep`). |
-| `--content full\|dom\|auto` | Convert the full document or select a scored DOM content candidate (`full` by default). |
+| `--content full\|dom\|readability\|auto` | Convert the full document, use a scored DOM candidate, use Readability, or choose automatically (`full` by default). |
 | `--debug-extraction` | Print candidate scores, the selected root, and fallback reasons to stderr. |
 | `-V, --version` | Show the version and exit. |
 
@@ -117,11 +117,11 @@ Extract the primary article or main element while inspecting the selection decis
 get-md https://example.com/article --content auto --debug-extraction
 ```
 
-`dom` and `auto` score semantic DOM candidates using text length, paragraphs, link density,
-punctuation, headings, code blocks, and tables. If the best candidate is too short, dominated
-by links, or lacks document structure, conversion safely falls back to the full document.
-The two modes currently share this conservative DOM strategy; `auto` is reserved for adding
-an evaluated extraction library in a later phase. The default remains `full` for compatibility.
+`readability` and `auto` first use `readability-lxml`, which was selected by comparing article,
+technical-document, and table fixtures. Its result must pass checks for text length, paragraphs,
+link density, and document structure. Otherwise conversion falls back to the scored DOM candidates,
+and then to the full document if no candidate is suitable. `dom` skips Readability and starts with
+the DOM candidates. The default remains `full` for compatibility.
 
 Front matter may contain the page title, description, canonical URL, author, publication
 time, language, and fetch time when those values are available. Values are YAML-encoded,
@@ -154,6 +154,12 @@ Run the fixture conversion benchmark:
 
 ```sh
 uv run python scripts/benchmark_converter.py tests/fixtures
+```
+
+Compare the optional article extraction libraries:
+
+```sh
+uv run python scripts/compare_extractors.py
 ```
 
 ## License
