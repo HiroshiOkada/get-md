@@ -15,3 +15,8 @@
 `GET_MD_RUN_LIVE_TESTS=1 uv run pytest -m live` も実行したが、YouTube への navigation は
 `net::ERR_TUNNEL_CONNECTION_FAILED` となった。ブラウザの導入とローカル E2E テストは成功して
 いるため、アプリケーションの回帰ではなく、この実行環境から対象サイトへのネットワーク制約である。
+
+その後、YouTube に接続可能な環境（Python 3.14.5）で同じ live テストを実行し、1 件が
+7.39 秒で成功した。これにより、リリース文書の最終整備後も HTTP fast path からブラウザへの
+自動フォールバックを経由して、OpenAI の動画一覧から意味のあるメタデータを取得できることを
+実サイトで確認した。
