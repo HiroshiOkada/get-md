@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from get_md import cli
+from get_md.fetcher import FetchResult
 
 
 def test_cli_passes_markdown_options(monkeypatch, capsys) -> None:
@@ -64,12 +67,17 @@ def test_cli_reads_multiple_urls_and_writes_to_output_directory(
     input_path = tmp_path / "urls.txt"
     input_path.write_text("# targets\nhttps://example.com/second\n\n", encoding="utf-8")
     fetched: list[str] = []
+    received_concurrency: list[int] = []
 
-    def fake_fetch(url: str, **kwargs: object) -> str:
-        fetched.append(url)
-        return f"<html><body><h1>{url}</h1></body></html>"
+    async def fake_fetch_many(requests, *, concurrency: int, **kwargs):
+        received_concurrency.append(concurrency)
+        fetched.extend(request.url for request in requests)
+        return [
+            FetchResult(request.url, html=f"<html><body><h1>{request.url}</h1></body></html>")
+            for request in requests
+        ]
 
-    monkeypatch.setattr(cli, "fetch", fake_fetch)
+    monkeypatch.setattr(cli, "fetch_many", fake_fetch_many)
     output_dir = tmp_path / "results"
 
     result = cli.main(
@@ -79,18 +87,26 @@ def test_cli_reads_multiple_urls_and_writes_to_output_directory(
             str(input_path),
             "--output-dir",
             str(output_dir),
+            "--concurrency",
+            "2",
         ]
     )
 
     assert result == 0
     assert fetched == ["https://example.com/first", "https://example.com/second"]
+    assert received_concurrency == [2]
     assert "https://example.com/first" in (output_dir / "first.md").read_text()
     assert "https://example.com/second" in (output_dir / "second.md").read_text()
-    assert capsys.readouterr().out.count("saved:") == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.count("saved:") == 2
 
 
 def test_cli_accepts_output_as_directory_for_multiple_urls(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(cli, "fetch", lambda *args, **kwargs: "<p>content</p>")
+    async def fake_fetch_many(requests, **kwargs):
+        return [FetchResult(request.url, html="<p>content</p>") for request in requests]
+
+    monkeypatch.setattr(cli, "fetch_many", fake_fetch_many)
     output_dir = tmp_path / "results"
 
     result = cli.main(
@@ -100,3 +116,69 @@ def test_cli_accepts_output_as_directory_for_multiple_urls(monkeypatch, tmp_path
     assert result == 0
     assert (output_dir / "one.md").is_file()
     assert (output_dir / "two.md").is_file()
+
+
+def test_cli_batch_continues_after_error_and_preserves_result_order(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    async def fake_fetch_many(requests, **kwargs):
+        return [
+            FetchResult(requests[0].url, html="<h1>First</h1>"),
+            FetchResult(requests[1].url, error=OSError("unreachable")),
+            FetchResult(requests[2].url, html="<h1>Third</h1>"),
+        ]
+
+    monkeypatch.setattr(cli, "fetch_many", fake_fetch_many)
+    output_dir = tmp_path / "results"
+
+    result = cli.main(
+        [
+            "https://example.com/first",
+            "https://example.com/failed",
+            "https://example.com/third",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert result == 1
+    assert (output_dir / "first.md").read_text(encoding="utf-8").startswith("# First")
+    assert not (output_dir / "failed.md").exists()
+    assert (output_dir / "third.md").read_text(encoding="utf-8").startswith("# Third")
+    captured = capsys.readouterr()
+    assert captured.err.index("saved: ") < captured.err.index("error: failed")
+    assert captured.err.rindex("saved: ") > captured.err.index("error: failed")
+
+
+def test_cli_single_url_keeps_fetch_and_output_compatibility(monkeypatch, tmp_path) -> None:
+    called: list[str] = []
+
+    def fake_fetch(url: str, **kwargs) -> str:
+        called.append(url)
+        return "<h1>Single</h1>"
+
+    monkeypatch.setattr(cli, "fetch", fake_fetch)
+    output = tmp_path / "custom.md"
+
+    result = cli.main(["https://example.com/single", "-o", str(output)])
+
+    assert result == 0
+    assert called == ["https://example.com/single"]
+    assert output.read_text(encoding="utf-8").startswith("# Single")
+
+
+def test_cli_rejects_batch_output_filename_collision(tmp_path) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "https://first.example/article",
+                "https://second.example/article",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+
+
+def test_cli_rejects_non_positive_concurrency() -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["https://example.com", "--concurrency", "0"])

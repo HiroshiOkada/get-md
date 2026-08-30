@@ -69,6 +69,7 @@ get-md <URL> [URL ...] [options]
 | `--install-browser` | Install the Chromium binary required by Playwright, then exit. |
 | `-o, --output PATH` | Output Markdown file path. Use `-` to print to stdout. Defaults to a name derived from the URL. |
 | `--output-dir DIR` | Save URL-derived output files in this directory. Multiple URLs require this or `-o DIR`. |
+| `--concurrency N` | Maximum pages fetched concurrently in a batch (default: `4`). |
 | `--wait SECONDS` | Extra seconds to wait for JavaScript rendering after the page loads. |
 | `--timeout SECONDS` | Navigation timeout in seconds (default: 30). |
 | `--wait-until EVENT` | Navigation event to await: `domcontentloaded`, `load`, `networkidle`, or `commit` (default: `domcontentloaded`). |
@@ -101,8 +102,13 @@ get-md https://example.com/page -o page.md
 Fetch multiple pages from arguments and a file:
 
 ```sh
-get-md https://example.com/one --input urls.txt --output-dir exported
+get-md https://example.com/one --input urls.txt --output-dir exported --concurrency 4
 ```
+
+Batch mode launches Chromium once, reuses it for every URL, and preserves input order while
+limiting active pages with `--concurrency`. A failed URL is reported to stderr without cancelling
+the remaining URLs; the command exits nonzero after saving all successful results. Progress,
+warnings, and output paths are written to stderr.
 
 Print Markdown to stdout:
 
@@ -172,6 +178,13 @@ Measure browser cold-start and navigation time separately:
 
 ```sh
 uv run python scripts/benchmark_fetch.py https://example.com --runs 3
+```
+
+Compare sequential browser launches with a browser-reusing batch:
+
+```sh
+uv run python scripts/benchmark_batch.py \
+  https://example.com/one https://example.com/two --concurrency 2
 ```
 
 Compare the optional article extraction libraries:
