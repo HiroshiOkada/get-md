@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
 import threading
@@ -8,7 +10,19 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from get_md.fetcher import fetch
+
+_YOUTUBE_LIVE_URL = "https://www.youtube.com/@OpenAI/videos"
+_YOUTUBE_VIEW_COUNT = re.compile(
+    r"(?:[\d,.]+\s*[KMB]?\s+views?|[\d,.]+\s*万?\s*回視聴)", re.I
+)
+_YOUTUBE_RELATIVE_AGE = re.compile(
+    r"(?:\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\s+ago|\d+\s*(?:分|時間|日|週間|か月|年)前)",
+    re.I,
+)
+_YOUTUBE_VIDEO_LINK = re.compile(r"\[[^\]\n]{2,}\]\(https://www\.youtube\.com/watch\?v=")
 
 _PAGE = b"""<!doctype html>
 <html lang="en">
@@ -92,3 +106,37 @@ def test_cli_end_to_end_writes_configured_markdown(tmp_path: Path) -> None:
     assert "Site navigation outside the article" not in markdown
     assert "](" not in markdown
     assert "extraction: mode=dom selected=main#content" in result.stderr
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.environ.get("GET_MD_RUN_LIVE_TESTS") != "1",
+    reason="GET_MD_RUN_LIVE_TESTS=1 のときだけ実サイトへ接続する",
+)
+def test_youtube_openai_videos_include_meaningful_metadata(tmp_path: Path) -> None:
+    """実際の動画一覧でタイトル、視聴回数、公開からの経過時間を確認する。"""
+    output = tmp_path / "openai-videos.md"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "get_md.cli",
+            _YOUTUBE_LIVE_URL,
+            "-o",
+            str(output),
+            "--content",
+            "full",
+            "--wait",
+            "5",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    markdown = output.read_text(encoding="utf-8")
+    assert _YOUTUBE_VIDEO_LINK.search(markdown), "動画タイトル付きの watch リンクがない"
+    assert _YOUTUBE_VIEW_COUNT.search(markdown), "視聴回数がない"
+    assert _YOUTUBE_RELATIVE_AGE.search(markdown), "公開からの経過時間がない"
