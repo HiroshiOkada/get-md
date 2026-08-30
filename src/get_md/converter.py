@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Literal
@@ -29,6 +30,10 @@ _SAFE_LANGUAGE_RE = re.compile(r"^[A-Za-z0-9_+.-]+$")
 
 _BLANK_LINES = re.compile(r"\n{3,}")
 _TRAILING_WHITESPACE = re.compile(r"[ \t]+$", re.MULTILINE)
+_CONTENT_CLASS_RE = re.compile(
+    r"(^|[-_])(article|content|entry|main|post)([-_]|$)", re.I
+)
+_PUNCTUATION_RE = re.compile(r"[.!?。！？]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +43,30 @@ class ConversionOptions:
     front_matter: bool = False
     links: Literal["keep", "text", "strip"] = "keep"
     images: Literal["keep", "alt", "strip"] = "keep"
+    content: Literal["full", "dom", "auto"] = "full"
+
+
+@dataclass(frozen=True, slots=True)
+class ContentCandidate:
+    """A scored DOM element that may contain the page's primary content."""
+
+    selector: str
+    score: float
+    text_length: int
+    paragraphs: int
+    link_density: float
+    punctuation: int
+    structural_elements: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionDecision:
+    """Explain which content root was selected and why."""
+
+    requested_mode: str
+    selected: str
+    reason: str
+    candidates: tuple[ContentCandidate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +88,7 @@ def to_markdown(
     base_url: str | None = None,
     options: ConversionOptions | None = None,
     fetched_at: datetime | None = None,
+    extraction_callback: Callable[[ExtractionDecision], None] | None = None,
 ) -> str:
     """Convert raw ``html`` into Markdown text.
 
@@ -80,9 +110,11 @@ def to_markdown(
 
     _drop_hidden_and_noise(soup)
     _drop_empty_elements(soup)
+    root, decision = _select_content_root(soup, options.content)
+    if extraction_callback is not None:
+        extraction_callback(decision)
     _apply_content_policies(soup, options)
 
-    root = soup.body or soup
     md = markdownify(
         str(root),
         heading_style="ATX",
@@ -94,6 +126,95 @@ def to_markdown(
     if options.front_matter:
         result = _format_front_matter(metadata) + result
     return result
+
+
+def _select_content_root(
+    soup: BeautifulSoup, mode: Literal["full", "dom", "auto"]
+) -> tuple[Tag | BeautifulSoup, ExtractionDecision]:
+    full_root = soup.body or soup
+    if mode == "full":
+        return full_root, ExtractionDecision(mode, "full", "full mode requested")
+
+    scored = sorted(
+        (_score_candidate(tag, selector) for tag, selector in _content_candidates(soup)),
+        key=lambda candidate: candidate.score,
+        reverse=True,
+    )
+    if not scored:
+        return full_root, ExtractionDecision(mode, "full", "no DOM candidates found")
+
+    best = scored[0]
+    if best.text_length < 80:
+        reason = f"best candidate is too short ({best.text_length} characters)"
+        return full_root, ExtractionDecision(mode, "full", reason, tuple(scored))
+    if best.link_density > 0.65:
+        reason = f"best candidate has high link density ({best.link_density:.2f})"
+        return full_root, ExtractionDecision(mode, "full", reason, tuple(scored))
+    if best.paragraphs == 0 and best.structural_elements < 2:
+        reason = "best candidate lacks paragraph and document structure"
+        return full_root, ExtractionDecision(mode, "full", reason, tuple(scored))
+
+    selected_tag = next(
+        tag for tag, selector in _content_candidates(soup) if selector == best.selector
+    )
+    return selected_tag, ExtractionDecision(
+        mode, best.selector, "highest-quality DOM candidate", tuple(scored)
+    )
+
+
+def _content_candidates(soup: BeautifulSoup) -> list[tuple[Tag, str]]:
+    candidates: list[tuple[Tag, str]] = []
+    seen: set[int] = set()
+    for tag in soup.find_all(["article", "main"]):
+        if id(tag) not in seen:
+            candidates.append((tag, _candidate_label(tag, len(candidates))))
+            seen.add(id(tag))
+    for tag in soup.find_all(attrs={"role": True}):
+        if str(tag.get("role", "")).lower() == "main" and id(tag) not in seen:
+            candidates.append((tag, _candidate_label(tag, len(candidates))))
+            seen.add(id(tag))
+    for tag in soup.find_all(class_=True):
+        classes = [str(value) for value in tag.get("class", [])]
+        if any(_CONTENT_CLASS_RE.search(value) for value in classes) and id(tag) not in seen:
+            candidates.append((tag, _candidate_label(tag, len(candidates))))
+            seen.add(id(tag))
+    return candidates
+
+
+def _candidate_label(tag: Tag, index: int) -> str:
+    if tag.get("id"):
+        return f"{tag.name}#{tag['id']}"
+    classes = tag.get("class", [])
+    if classes:
+        return f"{tag.name}.{'.'.join(str(value) for value in classes)}"
+    if str(tag.get("role", "")).lower() == "main":
+        return f'{tag.name}[role="main"]'
+    return f"{tag.name}[{index}]"
+
+
+def _score_candidate(tag: Tag, selector: str) -> ContentCandidate:
+    text = tag.get_text(" ", strip=True)
+    text_length = len(text)
+    link_length = sum(len(link.get_text(" ", strip=True)) for link in tag.find_all("a"))
+    link_density = link_length / text_length if text_length else 1.0
+    paragraphs = len(tag.find_all("p"))
+    punctuation = len(_PUNCTUATION_RE.findall(text))
+    structural_elements = len(tag.find_all(["h1", "h2", "h3", "pre", "table", "blockquote"]))
+    score = (
+        text_length
+        + paragraphs * 80
+        + punctuation * 12
+        + structural_elements * 40
+    ) * (1 - min(link_density, 0.9))
+    return ContentCandidate(
+        selector=selector,
+        score=round(score, 2),
+        text_length=text_length,
+        paragraphs=paragraphs,
+        link_density=round(link_density, 3),
+        punctuation=punctuation,
+        structural_elements=structural_elements,
+    )
 
 
 def extract_metadata(
@@ -256,6 +377,8 @@ def derive_output_path(url: str) -> str:
 
 __all__ = [
     "ConversionOptions",
+    "ContentCandidate",
+    "ExtractionDecision",
     "PageMetadata",
     "derive_output_path",
     "extract_metadata",

@@ -14,7 +14,12 @@ _PAGE = b"""<!doctype html>
 <html lang="en">
 <head><title>Local integration page</title></head>
 <body>
-  <main id="content"><a href="/guide">Local guide</a></main>
+  <header>Site navigation outside the article</header>
+  <main id="content">
+    <h1>Local integration article</h1>
+    <p>This server-rendered paragraph has enough detail for conservative DOM extraction.</p>
+    <a href="/guide">Local guide</a>
+  </main>
   <script>document.querySelector('#content').insertAdjacentHTML(
     'beforeend', '<p id="rendered">Rendered by JavaScript.</p>'
   );</script>
@@ -70,6 +75,9 @@ def test_cli_end_to_end_writes_configured_markdown(tmp_path: Path) -> None:
                 "--front-matter",
                 "--links",
                 "text",
+                "--content",
+                "dom",
+                "--debug-extraction",
             ],
             check=False,
             capture_output=True,
@@ -81,4 +89,6 @@ def test_cli_end_to_end_writes_configured_markdown(tmp_path: Path) -> None:
     assert "title: Local integration page" in markdown
     assert "Local guide" in markdown
     assert "Rendered by JavaScript." in markdown
+    assert "Site navigation outside the article" not in markdown
     assert "](" not in markdown
+    assert "extraction: mode=dom selected=main#content" in result.stderr
