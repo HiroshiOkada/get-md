@@ -112,6 +112,8 @@ limiting active pages with `--concurrency`. A failed URL is reported to stderr w
 the remaining URLs; the command exits nonzero after saving all successful results. Progress,
 warnings, and output paths are written to stderr.
 
+### Fetch selection and browser requirements
+
 With the default `--fetch auto`, each URL is first requested over HTTP. HTML with enough visible
 text or article structure is converted immediately without starting Chromium. Short app shells,
 empty root elements, common JavaScript-required messages, HTTP failures, and non-HTML responses
@@ -119,6 +121,11 @@ fall back to the shared browser. Use `--fetch http` for predictable browser-free
 `--fetch browser` when JavaScript enhancements must always be captured. Screenshots always use the
 browser. HTTP mode follows redirects, decodes gzip/deflate responses, honors declared character
 sets, and uses the redirect destination as the base for relative URLs.
+
+`--wait`, `--wait-until`, `--wait-for-selector`, `--block-resources`, and `--strict` apply to
+browser fetches. They have no effect when HTTP content is accepted without fallback. The
+`networkidle` event is opt-in because pages with continuous network activity may not reach it.
+Browser navigation allows a usable partial DOM after a timeout unless `--strict` is supplied.
 
 Print Markdown to stdout:
 
@@ -154,6 +161,29 @@ the DOM candidates. The default remains `full` for compatibility.
 Front matter may contain the page title, description, canonical URL, author, publication
 time, language, and fetch time when those values are available. Values are YAML-encoded,
 and metadata remains opt-in so existing output is unchanged by default.
+
+### Output rules and exit status
+
+- A single URL defaults to a sanitized filename derived from its path, or `index.md` when the path
+  has no filename. `-o -` writes Markdown only to stdout.
+- For multiple URLs, `--output-dir DIR` and `-o DIR` are equivalent. The command rejects derived
+  filename collisions rather than overwriting an earlier result.
+- `--screenshot` requires a file output and always uses Chromium. The PNG uses the Markdown
+  filename with a `.png` suffix.
+- Status messages and per-URL errors go to stderr. A successful run exits with status `0`.
+  Argument errors, startup/fetch failures, or any failed URL in a batch produce a nonzero status;
+  successful batch results are still saved.
+
+### Current limitations
+
+- Browser installation is separate from Python package installation, and browser fallback cannot
+  run until `get-md --install-browser` has completed.
+- HTTP fetching does not execute JavaScript. Automatic mode uses conservative heuristics, but a
+  page whose incomplete static HTML looks substantial may require an explicit `--fetch browser`.
+- Content extraction is conservative rather than lossless. Use `--content full` when navigation,
+  appendices, or other page-wide material must be retained.
+- Authenticated pages, cookie/session reuse, persistent browser profiles, and result caching are
+  not currently supported.
 
 ## How it works
 
