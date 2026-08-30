@@ -8,6 +8,7 @@ dependencies = [
     "markdownify>=1.1",
     "playwright>=1.40",
     "pyyaml>=6.0",
+    "readability-lxml>=0.9",
 ]
 
 [project.scripts]
@@ -20,7 +21,9 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "readability-lxml>=0.8.4.1",
     "ruff>=0.6",
+    "trafilatura>=2.0",
 ]
 
 [tool.pytest.ini_options]

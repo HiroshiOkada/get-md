@@ -251,6 +251,35 @@ def test_dom_content_falls_back_for_short_or_link_heavy_candidates() -> None:
     assert "link density" in decisions[1].reason
 
 
+def test_readability_content_preserves_technical_structure() -> None:
+    decisions = []
+
+    md = to_markdown(
+        read_fixture("extractor_technical.html"),
+        options=ConversionOptions(content="readability"),
+        extraction_callback=decisions.append,
+    )
+
+    assert "# Client configuration" in md
+    assert '```python\nclient = Client(timeout=30)' in md
+    assert "Documentation menu" not in md
+    assert decisions[0].selected == "readability"
+
+
+def test_readability_falls_back_to_full_when_all_candidates_are_short() -> None:
+    decisions = []
+    html = "<body><header>Site</header><main><p>Brief.</p></main></body>"
+
+    md = to_markdown(
+        html,
+        options=ConversionOptions(content="readability"),
+        extraction_callback=decisions.append,
+    )
+
+    assert "Site" in md
+    assert decisions[0].selected == "full"
+
+
 def test_dom_content_fixture_preserves_article_structure_and_removes_chrome() -> None:
     md = to_markdown(
         read_fixture("content_extraction.html"),

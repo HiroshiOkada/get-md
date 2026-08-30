@@ -108,9 +108,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--content",
-        choices=("full", "dom", "auto"),
+        choices=("full", "dom", "readability", "auto"),
         default="full",
-        help="Content extraction mode: full document or scored DOM candidate (default: full).",
+        help="Content extraction mode: full, DOM, Readability, or automatic (default: full).",
     )
     parser.add_argument(
         "--debug-extraction",

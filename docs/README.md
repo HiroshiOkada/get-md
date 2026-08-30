@@ -14,6 +14,7 @@
 - [Codexによる改善アイデア](research/Codexによる改善アイデア.md)
 - [OpenCodeによる改善アイデア](research/OpenCodeによる改善アイデア.md)
 - [Antigravityによる改善アイデア](research/Antigravityによる改善アイデア.md)
+- [記事抽出ライブラリ比較](research/記事抽出ライブラリ比較.md)
 
 ## 次の開発開始時
 
