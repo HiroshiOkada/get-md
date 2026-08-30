@@ -69,7 +69,11 @@ get-md <URL> [options]
 | `-o, --output PATH` | Output Markdown file path. Use `-` to print to stdout. Defaults to a name derived from the URL. |
 | `--wait SECONDS` | Extra seconds to wait for JavaScript rendering after the page loads. |
 | `--timeout SECONDS` | Navigation timeout in seconds (default: 30). |
+| `--wait-until EVENT` | Navigation event to await: `domcontentloaded`, `load`, `networkidle`, or `commit` (default: `domcontentloaded`). |
+| `--wait-for-selector SELECTOR` | Wait until a selector becomes visible after navigation. |
 | `--screenshot` | Also save a full-page PNG screenshot next to the Markdown output. Incompatible with `-o -`. |
+| `--block-resources TYPE[,TYPE...]` | Block resource types while fetching (default: `font,media`; use `none` to disable). Display resources are allowed for screenshots. |
+| `--strict` | Fail instead of using an available partial DOM after a navigation timeout. |
 | `--front-matter`, `--no-front-matter` | Include page metadata as safe YAML front matter. Disabled by default. |
 | `--links keep\|text\|strip` | Keep Markdown links, keep only their text, or remove linked content (default: `keep`). |
 | `--images keep\|alt\|strip` | Keep Markdown images, keep only alt text, or remove images (default: `keep`). |
@@ -154,6 +158,12 @@ Run the fixture conversion benchmark:
 
 ```sh
 uv run python scripts/benchmark_converter.py tests/fixtures
+```
+
+Measure browser cold-start and navigation time separately:
+
+```sh
+uv run python scripts/benchmark_fetch.py https://example.com --runs 3
 ```
 
 Compare the optional article extraction libraries:

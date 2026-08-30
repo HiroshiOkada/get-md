@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import __version__
 from .converter import ConversionOptions, ExtractionDecision, derive_output_path, to_markdown
-from .fetcher import PlaywrightError, fetch
+from .fetcher import _RESOURCE_TYPES, _WAIT_UNTIL_VALUES, PlaywrightError, fetch
 
 _EPILOG = (
     "First-time setup (installs the Chromium binary, needed once):\n"
@@ -84,9 +84,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Navigation timeout in seconds (default: 30).",
     )
     parser.add_argument(
+        "--wait-until",
+        choices=_WAIT_UNTIL_VALUES,
+        default="domcontentloaded",
+        help="Navigation lifecycle event to await (default: domcontentloaded).",
+    )
+    parser.add_argument(
+        "--wait-for-selector",
+        default=None,
+        help="Wait for a selector to become visible after navigation.",
+    )
+    parser.add_argument(
         "--screenshot",
         action="store_true",
         help="Also save a full-page PNG screenshot next to the Markdown output.",
+    )
+    parser.add_argument(
+        "--block-resources",
+        type=_parse_resource_types,
+        default=frozenset({"font", "media"}),
+        metavar="TYPE[,TYPE...]",
+        help="Resource types to block (default: font,media; use 'none' to disable).",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail instead of using a partial DOM when navigation times out.",
     )
     parser.add_argument(
         "--front-matter",
@@ -153,6 +176,10 @@ def main(argv: list[str] | None = None) -> int:
             wait=args.wait,
             timeout=args.timeout,
             screenshot_path=screenshot_path,
+            wait_until=args.wait_until,
+            wait_for_selector=args.wait_for_selector,
+            block_resources=args.block_resources,
+            strict=args.strict,
         )
     except PlaywrightError as exc:
         print(f"error: failed to render page: {exc}", file=sys.stderr)
@@ -198,6 +225,18 @@ def _print_extraction_debug(decision: ExtractionDecision) -> None:
             f"structure={candidate.structural_elements}",
             file=sys.stderr,
         )
+
+
+def _parse_resource_types(value: str) -> frozenset[str]:
+    if value == "none":
+        return frozenset()
+    resource_types = frozenset(part.strip() for part in value.split(",") if part.strip())
+    invalid = resource_types - _RESOURCE_TYPES
+    if invalid:
+        raise argparse.ArgumentTypeError(f"unknown resource type(s): {', '.join(sorted(invalid))}")
+    if not resource_types:
+        raise argparse.ArgumentTypeError("specify resource types or 'none'")
+    return resource_types
 
 
 if __name__ == "__main__":

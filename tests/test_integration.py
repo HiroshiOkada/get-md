@@ -5,14 +5,16 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from get_md.fetcher import fetch
+from get_md.fetcher import FetchMetrics, NavigationTimeoutWarning, fetch
 
 _YOUTUBE_LIVE_URL = "https://www.youtube.com/@OpenAI/videos"
 _YOUTUBE_VIEW_COUNT = re.compile(
@@ -44,14 +46,39 @@ _PAGE = b"""<!doctype html>
 </html>
 """
 
+_NETWORK_PAGE = b"""<!doctype html><html><body><main>Partial content is ready.</main>
+<script>fetch('/slow')</script></body></html>"""
+_ASSET_PAGE = b"""<!doctype html><html><body><main>Asset page.</main>
+<img src="/pixel.png" alt="pixel"></body></html>"""
+_PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489")
+
 
 class _Handler(BaseHTTPRequestHandler):
+    requested_paths: list[str] = []
+
     def do_GET(self) -> None:  # noqa: N802
+        self.requested_paths.append(self.path)
+        if self.path == "/slow":
+            time.sleep(2)
+            body = b"done"
+            content_type = "text/plain"
+        elif self.path == "/network":
+            body = _NETWORK_PAGE
+            content_type = "text/html; charset=utf-8"
+        elif self.path == "/assets":
+            body = _ASSET_PAGE
+            content_type = "text/html; charset=utf-8"
+        elif self.path == "/pixel.png":
+            body = _PNG
+            content_type = "image/png"
+        else:
+            body = _PAGE
+            content_type = "text/html; charset=utf-8"
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(_PAGE)))
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(_PAGE)
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -59,6 +86,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 @contextmanager
 def local_page() -> Iterator[str]:
+    _Handler.requested_paths = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -76,6 +104,40 @@ def test_fetch_renders_local_javascript_page() -> None:
         html = fetch(url)
 
     assert '<p id="rendered">Rendered by JavaScript.</p>' in html
+
+
+def test_fetch_reports_separate_launch_and_navigation_metrics() -> None:
+    metrics: list[FetchMetrics] = []
+    with local_page() as url:
+        fetch(url, metrics_callback=metrics.append)
+
+    assert len(metrics) == 1
+    assert metrics[0].browser_launch_seconds > 0
+    assert metrics[0].navigation_seconds > 0
+
+
+def test_fetch_uses_partial_dom_after_navigation_timeout() -> None:
+    with local_page() as url, pytest.warns(NavigationTimeoutWarning):
+        html = fetch(f"{url.rsplit('/', 1)[0]}/network", wait_until="networkidle", timeout=1)
+
+    assert "Partial content is ready." in html
+
+
+def test_fetch_strict_mode_raises_navigation_timeout() -> None:
+    with local_page() as url, pytest.raises(PlaywrightTimeoutError):
+        fetch(f"{url.rsplit('/', 1)[0]}/network", wait_until="networkidle", timeout=1, strict=True)
+
+
+def test_screenshot_allows_blocked_display_resources(tmp_path: Path) -> None:
+    screenshot = tmp_path / "assets.png"
+    with local_page() as url:
+        asset_url = f"{url.rsplit('/', 1)[0]}/assets"
+        fetch(asset_url, block_resources=frozenset({"image"}))
+        assert "/pixel.png" not in _Handler.requested_paths
+        fetch(asset_url, block_resources=frozenset({"image"}), screenshot_path=screenshot)
+
+    assert "/pixel.png" in _Handler.requested_paths
+    assert screenshot.read_bytes().startswith(b"\x89PNG")
 
 
 def test_cli_end_to_end_writes_configured_markdown(tmp_path: Path) -> None:
